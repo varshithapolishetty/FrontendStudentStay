@@ -15,6 +15,9 @@ const read = (key, fallback) => {
 export const getBookings = () => read(BOOKINGS_KEY, []);
 
 export const addBooking = (booking) => {
+  if (!getUser()) {
+    throw new Error("Log in before creating a booking.");
+  }
   const all = getBookings();
   const saved = {
     ...booking,

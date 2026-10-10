@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { LOCATIONS, PGS, BUDGETS, FACILITIES, FAC, COVERS, WOMEN_COVERS, getPG, sharingLabel } from "./data";
 import { addBooking, cancelBooking, getBookings, getUser, setUser, bedsLeft, activeBookings } from "./store";
 import { Breadcrumb, FilterSidebar, OccupancyBar, PGCard, Stepper, money } from "./components";
@@ -263,6 +263,7 @@ export function Booking() {
   const { id } = useParams();
   const pg = getPG(id);
   const user = getUser();
+  const [authRequired, setAuthRequired] = useState(!user);
   const [step, setStep] = useState(0);
   const [sel, setSel] = useState(null);
   const [errors, setErrors] = useState({});
@@ -272,6 +273,22 @@ export function Booking() {
   });
 
   if (!pg) return <div className="ss-page">PG not found.</div>;
+  if (!user || authRequired) {
+    const returnTo = `/book/${pg.id}`;
+    return (
+      <div className="ss-page ss-center">
+        <div className="ss-card ss-success">
+          <h1>Login required</h1>
+          <p className="ss-muted">Please log in or create an account before booking {pg.name}.</p>
+          <div className="ss-row">
+            <Link to="/login" state={{ from: returnTo }} className="ss-btn ss-btn-primary">Login to continue</Link>
+            <Link to="/register" state={{ from: returnTo }} className="ss-btn ss-btn-ghost">Create account</Link>
+            <Link to={`/pg/${pg.id}`} className="ss-btn ss-btn-ghost">Back to PG</Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
   const option = pg.sharing.find((o) => o.type === sel);
 
   const validate = () => {
@@ -286,6 +303,10 @@ export function Booking() {
   };
 
   const confirm = () => {
+    if (!getUser()) {
+      setAuthRequired(true);
+      return;
+    }
     if (!option || bedsLeft(pg, option) === 0) return;
     const saved = addBooking({
       pgId: pg.id, pgName: pg.name, location: pg.location, category: pg.category,
@@ -469,6 +490,7 @@ export function Residents() {
 /* ---------------- AUTH (frontend demo) ---------------- */
 function AuthForm({ mode }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [f, setF] = useState({ name: "", email: "", password: "" });
   const [err, setErr] = useState("");
   const isReg = mode === "register";
@@ -479,7 +501,7 @@ function AuthForm({ mode }) {
     if (f.password.length < 6) return setErr("Password must be at least 6 characters");
     setUser({ name: f.name.trim() || f.email.split("@")[0], email: f.email });
     window.dispatchEvent(new Event("ss-auth"));
-    navigate("/stay");
+    navigate(location.state?.from || "/stay");
   };
 
   return (
