@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Navbar } from "./components";
-import { Home, Category, Locations, PGList, PGDetails, Booking, MyBookings, Residents, Login, Register } from "./pages";
+import { Home, Category, Locations, PGList, PGDetails, Booking, MyBookings, Residents, Login, Register, Dashboard } from "./pages";
 
 export default function App() {
   return (
@@ -14,6 +14,7 @@ export default function App() {
         <Route path="/pg/:id" element={<PGDetails />} />
         <Route path="/book/:id" element={<Booking />} />
         <Route path="/my-bookings" element={<MyBookings />} />
+        <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/residents" element={<Residents />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />

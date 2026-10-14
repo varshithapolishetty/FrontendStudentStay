@@ -33,8 +33,9 @@ export function Navbar() {
       <div className="ss-nav-links">
         <NavLink to="/" end>Home</NavLink>
         <NavLink to="/stay">Find a Stay</NavLink>
+        {user && <NavLink to="/dashboard">{user.role === "ADMIN" ? "Admin Dashboard" : user.role === "OWNER" ? "Owner Dashboard" : "Student Dashboard"}</NavLink>}
         <NavLink to="/my-bookings">My Bookings</NavLink>
-        <NavLink to="/residents">Residents</NavLink>
+        {(user?.role === "OWNER" || user?.role === "ADMIN") && <NavLink to="/residents">Residents</NavLink>}
         <button className="ss-icon-btn" onClick={() => setDark(!dark)} title="Toggle theme">
           {dark ? "☀️" : "🌙"}
         </button>

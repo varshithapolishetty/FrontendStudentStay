@@ -38,7 +38,7 @@ function Navbar() {
 
       <div className="nav-links">
         <Link to="/">Home</Link>
-        <Link to="/properties">PGs & Hostels</Link>
+        <Link to="/properties">Hostels</Link>
         <Link to="/login">Login</Link>
         <Link to="/register" className="register-btn">
           Register
@@ -62,7 +62,7 @@ function Home() {
           </h1>
 
           <p className="description">
-            Discover affordable PGs and hostels near your college.
+            Discover affordable hostels near your college.
             Check room availability, apply for accommodation and
             manage your stay in one place.
           </p>
@@ -112,7 +112,7 @@ function Home() {
             <div className="feature-icon">🔍</div>
             <h3>Easy Search</h3>
             <p>
-              Find PGs and hostels using location, rent,
+              Find hostels using location, rent,
               room type and facilities.
             </p>
           </div>
@@ -197,7 +197,7 @@ function Properties() {
     <div className="page">
       <div className="page-header">
         <p className="small-title">STUDENTSTAY</p>
-        <h1>PGs & Hostels</h1>
+        <h1>Hostels</h1>
         <p>
           Find comfortable and affordable accommodation
           for your student life.
@@ -351,7 +351,7 @@ function Register() {
         <label>Register as</label>
         <select>
           <option>Student</option>
-          <option>PG / Hostel Owner</option>
+          <option>Hostel Owner</option>
         </select>
 
         <button className="auth-btn">
@@ -406,7 +406,7 @@ function StudentDashboard() {
           <div className="stay-icon">🏠</div>
 
           <div>
-            <h3>Sunrise Student PG</h3>
+            <h3>Sunrise Student Stay</h3>
             <p>Room 204 • Double Sharing</p>
             <p>📍 Madhapur, Hyderabad</p>
           </div>

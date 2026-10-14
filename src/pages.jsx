@@ -1,10 +1,10 @@
-import { useMemo, useState } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { LOCATIONS, PGS, BUDGETS, FACILITIES, FAC, COVERS, WOMEN_COVERS, getPG, sharingLabel } from "./data";
-import { addBooking, cancelBooking, getBookings, getUser, setUser, bedsLeft, activeBookings } from "./store";
+import { addBooking, cancelBooking, cancelBookingByServerId, getBookings, getUser, setSession, apiRequest, bedsLeft, activeBookings } from "./store";
 import { Breadcrumb, FilterSidebar, OccupancyBar, PGCard, Stepper, money } from "./components";
 
-const catName = (c) => (c === "women" ? "Women's PG / Hostel" : "Men's PG / Hostel");
+const catName = (c) => (c === "women" ? "Women's Hostel" : "Men's Hostel");
 const coverOf = (pg) => {
   const list = pg.category === "women" ? WOMEN_COVERS : COVERS;
   return list[pg.id % list.length];
@@ -21,12 +21,12 @@ export function Home() {
           <p className="ss-eyebrow">SMART STUDENT ACCOMMODATION</p>
           <h1>Find your perfect <span>student stay</span></h1>
           <p className="ss-hero-text">
-            Men's and women's PGs and hostels near your college. Filter by budget, sharing and
+            Men's and women's hostels near your college. Filter by budget, sharing and
             facilities, then book in a minute.
           </p>
           <Link to="/stay" className="ss-btn ss-btn-primary ss-btn-lg">Get Started →</Link>
           <div className="ss-hero-stats">
-            <div><b>{PGS.length}+</b><span>PGs & Hostels</span></div>
+            <div><b>{PGS.length}+</b><span>Hostels</span></div>
             <div><b>{LOCATIONS.length}</b><span>Locations</span></div>
             <div><b>{FACILITIES.length}</b><span>Facilities to filter</span></div>
           </div>
@@ -62,12 +62,12 @@ export function Category() {
       <div className="ss-cat-grid">
         <Link to="/stay/men" className="ss-card ss-cat ss-grad-men">
           <span className="ss-cat-emoji">👨‍🎓</span>
-          <h2>Men's PG / Hostel</h2>
+          <h2>Men's Hostel</h2>
           <p>{PGS.filter((p) => p.category === "men").length} stays available</p>
         </Link>
         <Link to="/stay/women" className="ss-card ss-cat ss-grad-women">
           <span className="ss-cat-emoji">👩‍🎓</span>
-          <h2>Women's PG / Hostel</h2>
+          <h2>Women's Hostel</h2>
           <p>{PGS.filter((p) => p.category === "women").length} stays available</p>
         </Link>
       </div>
@@ -96,7 +96,7 @@ export function Locations() {
               <div>
                 <h3>{l.name}</h3>
                 <p className="ss-muted">{l.note}</p>
-                <p><b>{pgs.length}</b> PGs {from && <>• from <b>{money(from)}</b></>}</p>
+                <p><b>{pgs.length}</b> hostels {from && <>• from <b>{money(from)}</b></>}</p>
               </div>
             </Link>
           );
@@ -190,7 +190,7 @@ export function PGDetails() {
   const { id } = useParams();
   const pg = getPG(id);
   const [tab, setTab] = useState("rooms");
-  if (!pg) return <div className="ss-page">PG not found.</div>;
+  if (!pg) return <div className="ss-page">Hostel not found.</div>;
 
   const total = pg.sharing.reduce((s, o) => s + o.total, 0);
   const left = pg.sharing.reduce((s, o) => s + bedsLeft(pg, o), 0);
@@ -268,11 +268,13 @@ export function Booking() {
   const [sel, setSel] = useState(null);
   const [errors, setErrors] = useState({});
   const [done, setDone] = useState(null);
+  const [bookingError, setBookingError] = useState("");
+  const [bookingBusy, setBookingBusy] = useState(false);
   const [form, setForm] = useState({
     name: user?.name || "", place: "", phone: "", email: user?.email || "", joinDate: "",
   });
 
-  if (!pg) return <div className="ss-page">PG not found.</div>;
+  if (!pg) return <div className="ss-page">Hostel not found.</div>;
   if (!user || authRequired) {
     const returnTo = `/book/${pg.id}`;
     return (
@@ -283,7 +285,7 @@ export function Booking() {
           <div className="ss-row">
             <Link to="/login" state={{ from: returnTo }} className="ss-btn ss-btn-primary">Login to continue</Link>
             <Link to="/register" state={{ from: returnTo }} className="ss-btn ss-btn-ghost">Create account</Link>
-            <Link to={`/pg/${pg.id}`} className="ss-btn ss-btn-ghost">Back to PG</Link>
+            <Link to={`/pg/${pg.id}`} className="ss-btn ss-btn-ghost">Back to hostel</Link>
           </div>
         </div>
       </div>
@@ -302,17 +304,47 @@ export function Booking() {
     return Object.keys(e).length === 0;
   };
 
-  const confirm = () => {
+  const confirm = async () => {
     if (!getUser()) {
       setAuthRequired(true);
       return;
     }
     if (!option || bedsLeft(pg, option) === 0) return;
-    const saved = addBooking({
-      pgId: pg.id, pgName: pg.name, location: pg.location, category: pg.category,
-      sharing: option.type, rent: option.rent, ...form,
-    });
-    setDone(saved);
+    setBookingBusy(true);
+    setBookingError("");
+    try {
+      const saved = await apiRequest("/demo-bookings", {
+        method: "POST",
+        body: JSON.stringify({
+          pgId: pg.id,
+          pgName: pg.name,
+          location: pg.location,
+          category: pg.category,
+          sharing: option.type,
+          rent: option.rent,
+          studentName: form.name,
+          place: form.place,
+          phone: form.phone,
+          moveInDate: form.joinDate,
+        }),
+      });
+      addBooking({
+        pgId: pg.id, pgName: pg.name, location: pg.location, category: pg.category,
+        sharing: option.type, rent: option.rent, ...form, serverBookingId: saved.id,
+      });
+      setDone({
+        ...saved,
+        id: `DB-${saved.id}`,
+        pgName: saved.pgName,
+        sharing: saved.sharing,
+        rent: saved.rent,
+        moveInDate: saved.moveInDate,
+      });
+    } catch (requestError) {
+      setBookingError(requestError.message);
+    } finally {
+      setBookingBusy(false);
+    }
   };
 
   if (done) {
@@ -336,7 +368,7 @@ export function Booking() {
           <p>{pg.name}, {pg.location} • {sharingLabel(done.sharing)} • {money(done.rent)}/month</p>
           <div className="ss-row">
             <Link to="/my-bookings" className="ss-btn ss-btn-primary">View my bookings</Link>
-            <Link to={`/pg/${pg.id}`} className="ss-btn ss-btn-ghost">Back to PG</Link>
+            <Link to={`/pg/${pg.id}`} className="ss-btn ss-btn-ghost">Back to hostel</Link>
           </div>
         </div>
       </div>
@@ -397,7 +429,7 @@ export function Booking() {
         <div className="ss-card ss-pad">
           <h3>Review & confirm</h3>
           <dl className="ss-summary">
-            <dt>PG</dt><dd>{pg.name}, {pg.location}</dd>
+            <dt>Hostel</dt><dd>{pg.name}, {pg.location}</dd>
             <dt>Room</dt><dd>{sharingLabel(option.type)}</dd>
             <dt>Rent</dt><dd>{money(option.rent)} / month</dd>
             <dt>Name</dt><dd>{form.name}</dd>
@@ -408,8 +440,9 @@ export function Booking() {
           </dl>
           <div className="ss-row">
             <button className="ss-btn ss-btn-ghost" onClick={() => setStep(1)}>← Back</button>
-            <button className="ss-btn ss-btn-primary" onClick={confirm}>Confirm Booking</button>
+            <button className="ss-btn ss-btn-primary" onClick={confirm} disabled={bookingBusy}>{bookingBusy ? "Saving booking..." : "Confirm Booking"}</button>
           </div>
+          {bookingError && <p className="ss-error" role="alert">{bookingError}</p>}
         </div>
       )}
     </div>
@@ -418,26 +451,98 @@ export function Booking() {
 
 /* ---------------- MY BOOKINGS ---------------- */
 export function MyBookings() {
-  const [list, setList] = useState(getBookings());
-  const cancel = (id) => { cancelBooking(id); setList(getBookings()); };
+  const user = getUser();
+  const userEmail = user?.email;
+  const [list, setList] = useState([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(Boolean(user));
+
+  const load = useCallback(async () => {
+    if (!userEmail) {
+      setLoading(false);
+      return;
+    }
+    const localBookings = getBookings()
+      .filter((booking) => !booking.serverBookingId
+        && (booking.accountEmail || booking.email)?.toLowerCase() === userEmail.toLowerCase())
+      .map((booking) => ({ ...booking, source: "local" }));
+    setList(localBookings);
+    try {
+      const [demoBookings, propertyBookings] = await Promise.all([
+        apiRequest("/demo-bookings/my"),
+        apiRequest("/bookings/my"),
+      ]);
+      const persistedDemoBookings = (demoBookings || []).map((booking) => ({
+        ...booking,
+        id: `DB-${booking.id}`,
+        serverBookingId: booking.id,
+        pgName: booking.pgName,
+        sharing: booking.sharing,
+        rent: booking.rent,
+        joinDate: booking.moveInDate,
+        status: booking.status === "ACTIVE" ? "Confirmed" : booking.status,
+        source: "demo-api",
+      }));
+      const persistedPropertyBookings = (propertyBookings || []).map((booking) => ({
+        ...booking,
+        pgName: booking.propertyTitle,
+        sharing: booking.roomName || "Room",
+        rent: booking.monthlyRent,
+        joinDate: booking.moveInDate,
+        status: booking.status,
+        source: "api",
+      }));
+      setList([...persistedDemoBookings, ...persistedPropertyBookings, ...localBookings]);
+      setError("");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [userEmail]);
+
+  useEffect(() => { void Promise.resolve().then(load); }, [load]);
+
+  const cancel = async (booking) => {
+    setError("");
+    try {
+      if (booking.source === "local") {
+        cancelBooking(booking.id);
+      } else if (booking.source === "demo-api") {
+        await apiRequest(`/demo-bookings/${booking.serverBookingId}/cancel`, { method: "PATCH" });
+        cancelBookingByServerId(booking.serverBookingId);
+      } else {
+        await apiRequest(`/bookings/${booking.id}/cancel`, {
+          method: "PATCH",
+          body: JSON.stringify({ reason: "Cancelled by student" }),
+        });
+      }
+      await load();
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  };
 
   return (
     <div className="ss-page">
       <h1>My Bookings</h1>
-      {list.length === 0 && (
+      {error && <p className="ss-error" role="alert">{error}</p>}
+      {!user && <div className="ss-empty"><h3>Log in to view your bookings</h3><Link to="/login" className="ss-btn ss-btn-primary">Login</Link></div>}
+      {loading && <p className="ss-muted">Loading your bookings...</p>}
+      {user && !loading && list.length === 0 && (
         <div className="ss-empty"><div>🛏️</div><h3>No bookings yet</h3><Link to="/stay" className="ss-btn ss-btn-primary">Find a stay</Link></div>
       )}
       <div className="ss-grid-2">
         {list.map((b) => (
           <div key={b.id} className="ss-card ss-pad">
             <div className="ss-row ss-between">
-              <h3>{b.pgName}</h3>
-              <span className={"ss-badge " + (b.status === "Confirmed" ? "ss-badge-green" : "ss-badge-red")}>{b.status}</span>
+              <h3>{b.pgName || b.propertyTitle}</h3>
+              <span className={"ss-badge " + (["Confirmed", "ACTIVE"].includes(b.status) ? "ss-badge-green" : "ss-badge-red")}>{statusText(b.status)}</span>
             </div>
-            <p className="ss-muted">📍 {b.location} • {sharingLabel(b.sharing)} • {money(b.rent)}/mo</p>
+            <p className="ss-muted">📍 {b.location || b.propertyLocation || ""} • {b.sharing ? sharingLabel(b.sharing) : b.roomName || "Room"} • {money(b.rent ?? b.monthlyRent)}/mo</p>
             <p>Booking ID: <b>{b.id}</b></p>
-            <p className="ss-muted">Joining: {b.joinDate}</p>
-            {b.status === "Confirmed" && <button className="ss-btn ss-btn-ghost" onClick={() => cancel(b.id)}>Cancel booking</button>}
+            <p className="ss-muted">Joining: {b.joinDate || b.moveInDate || "—"}</p>
+            {["Confirmed", "ACTIVE"].includes(b.status) && <button className="ss-btn ss-btn-ghost" onClick={() => void cancel(b)}>Cancel booking</button>}
           </div>
         ))}
       </div>
@@ -479,7 +584,7 @@ export function Residents() {
             {residents.map((r) => (
               <tr key={r.id}><td><b>{r.name}</b></td><td>{r.place}</td><td>{sharingLabel(r.sharing)}</td><td>{r.phone}</td><td>{r.joinDate}</td></tr>
             ))}
-            {residents.length === 0 && <tr><td colSpan="5" className="ss-muted ss-center">No registered students yet for this PG.</td></tr>}
+            {residents.length === 0 && <tr><td colSpan="5" className="ss-muted ss-center">No registered students yet for this hostel.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -487,21 +592,575 @@ export function Residents() {
   );
 }
 
+/* ---------------- ROLE DASHBOARDS ---------------- */
+const statusText = (status) => ({
+  ACTIVE: "Confirmed",
+  CANCELLED: "Cancelled",
+  COMPLETED: "Checked out",
+  PENDING: "Pending",
+  ACCEPTED: "Approved",
+  REJECTED: "Rejected",
+}[status] || status || "—");
+
+function StatCard({ label, value }) {
+  return <div className="ss-card ss-stat"><span>{label}</span><b>{value ?? 0}</b></div>;
+}
+
+function StudentDashboard({ user }) {
+  const [bookings, setBookings] = useState([]);
+  const [applications, setApplications] = useState([]);
+  const [profile, setProfile] = useState(user);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const [remoteProfile, remoteBookings, remoteApplications, remoteDemoBookings] = await Promise.all([
+        apiRequest("/auth/me"),
+        apiRequest("/bookings/my"),
+        apiRequest("/applications/my"),
+        apiRequest("/demo-bookings/my"),
+      ]);
+      setProfile(remoteProfile);
+      const localBookings = getBookings()
+        .filter((booking) => !booking.serverBookingId
+          && (booking.accountEmail || booking.email)?.toLowerCase() === user.email?.toLowerCase())
+        .map((booking) => ({ ...booking, source: "local" }));
+      const persistedDemoBookings = (remoteDemoBookings || []).map((booking) => ({
+        ...booking,
+        id: `DB-${booking.id}`,
+        serverBookingId: booking.id,
+        status: booking.status,
+        source: "demo-api",
+      }));
+      setBookings([
+        ...localBookings,
+        ...persistedDemoBookings,
+        ...(remoteBookings || []).map((booking) => ({ ...booking, source: "api" })),
+      ]);
+      setApplications(remoteApplications || []);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }, [user.email]);
+
+  useEffect(() => { void Promise.resolve().then(load); }, [load]);
+
+  const cancel = async (booking) => {
+    setError("");
+    setNotice("");
+    try {
+      if (booking.source === "local") {
+        cancelBooking(booking.id);
+      } else if (booking.source === "demo-api") {
+        await apiRequest(`/demo-bookings/${booking.serverBookingId}/cancel`, { method: "PATCH" });
+        cancelBookingByServerId(booking.serverBookingId);
+      } else {
+        await apiRequest(`/bookings/${booking.id}/cancel`, {
+          method: "PATCH",
+          body: JSON.stringify({ reason: "Cancelled by student" }),
+        });
+      }
+      setNotice("Booking cancelled.");
+      await load();
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  };
+
+  const activeCount = bookings.filter((booking) => ["ACTIVE", "Confirmed"].includes(booking.status)).length;
+  return (
+    <div className="ss-page">
+      <div className="ss-row ss-between">
+        <div><h1>Student Dashboard</h1><p className="ss-muted">Welcome, {profile.fullName || profile.name || profile.username || profile.email}</p></div>
+        <Link to="/stay" className="ss-btn ss-btn-primary">Find a hostel</Link>
+      </div>
+      {error && <p className="ss-error" role="alert">{error}</p>}
+      {notice && <p className="ss-muted" role="status">{notice}</p>}
+      <div className="ss-grid-3 ss-stats">
+        <StatCard label="Your bookings" value={bookings.length} />
+        <StatCard label="Active bookings" value={activeCount} />
+        <StatCard label="Applications" value={applications.length} />
+      </div>
+      <section className="ss-section">
+        <h2>My profile</h2>
+        <div className="ss-card ss-pad" style={{ marginTop: 14 }}>
+          <p><b>Name</b> &nbsp; {profile.fullName || profile.name || "—"}</p>
+          <p><b>Username</b> &nbsp; {profile.username || "—"}</p>
+          <p><b>Email</b> &nbsp; {profile.email || "—"}</p>
+          <p><b>Phone</b> &nbsp; {profile.phone || "—"}</p>
+        </div>
+      </section>
+      <section className="ss-section">
+        <div className="ss-row ss-between"><h2>Booking history</h2><Link to="/my-bookings" className="ss-link">View all</Link></div>
+        {bookings.length === 0 ? (
+          <div className="ss-empty"><div>🛏️</div><h3>No bookings yet</h3><Link to="/stay" className="ss-btn ss-btn-primary">Find a stay</Link></div>
+        ) : (
+          <div className="ss-grid-2">
+            {bookings.map((booking) => {
+              const active = ["ACTIVE", "Confirmed"].includes(booking.status);
+              const name = booking.propertyTitle || booking.pgName || "Hostel";
+              const location = booking.location || booking.propertyLocation || "";
+              const room = booking.roomName || (booking.sharing ? sharingLabel(booking.sharing) : "Room allocation");
+              const rent = booking.monthlyRent ?? booking.rent;
+              return (
+                <article className="ss-card ss-pad" key={`${booking.source}-${booking.id}`}>
+                  <div className="ss-row ss-between"><h3>{name}</h3><span className={"ss-badge " + (active ? "ss-badge-green" : "ss-badge-red")}>{statusText(booking.status)}</span></div>
+                  <p className="ss-muted">📍 {location} {location && "•"} {room}</p>
+                  <p>Booking ID: <b>{booking.id}</b></p>
+                  {rent != null && <p>Rent: {money(rent)}/month</p>}
+                  <p className="ss-muted">Joining: {booking.moveInDate || booking.joinDate || "—"}</p>
+                  {active && <button className="ss-btn ss-btn-ghost" onClick={() => cancel(booking)}>Cancel booking</button>}
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+      <section className="ss-section">
+        <h2>Application status</h2>
+        {applications.length === 0 ? <p className="ss-muted" style={{ marginTop: 12 }}>No applications yet.</p> : (
+          <div className="ss-grid-2" style={{ marginTop: 14 }}>
+            {applications.map((application) => (
+              <article className="ss-card ss-pad" key={application.id}>
+                <div className="ss-row ss-between"><h3>{application.propertyTitle || application.propertyName || "Hostel"}</h3><span className="ss-badge ss-badge-blue">{statusText(application.status)}</span></div>
+                <p className="ss-muted">Requested move-in: {application.proposedMoveInDate || "—"}</p>
+                {application.ownerDecisionReason && <p>{application.ownerDecisionReason}</p>}
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function OwnerDashboard() {
+  const [properties, setProperties] = useState([]);
+  const [selectedPropertyId, setSelectedPropertyId] = useState("");
+  const [applications, setApplications] = useState([]);
+  const [bookings, setBookings] = useState([]);
+  const [query, setQuery] = useState("");
+  const [roomEdits, setRoomEdits] = useState({});
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const owned = await apiRequest("/properties/owner");
+      const data = await Promise.all((owned || []).map(async (property) => {
+        const [details, propertyApplications, propertyBookings] = await Promise.all([
+          apiRequest(`/properties/${property.id}?includeUnverified=true`),
+          apiRequest(`/properties/${property.id}/applications`),
+          apiRequest(`/properties/${property.id}/bookings`),
+        ]);
+        return {
+          ...details,
+          title: details.title || property.title,
+          status: details.status || property.status,
+          applications: propertyApplications || [],
+          bookings: (propertyBookings || []).map((booking) => ({
+            ...booking,
+            propertyTitle: details.title,
+            propertyLocation: [details.locality, details.city].filter(Boolean).join(", "),
+          })),
+        };
+      }));
+      setProperties(data);
+      setApplications(data.flatMap((property) => property.applications));
+      setBookings(data.flatMap((property) => property.bookings));
+      setError("");
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }, []);
+
+  useEffect(() => { void Promise.resolve().then(load); }, [load]);
+
+  const perform = async (action, successMessage) => {
+    setError("");
+    setNotice("");
+    try {
+      await action();
+      setNotice(successMessage);
+      await load();
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  };
+
+  const decideApplication = (application, status) => perform(
+    () => apiRequest(`/applications/${application.id}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, reason: "" }),
+    }),
+    `Application ${status === "ACCEPTED" ? "approved" : "rejected"}.`,
+  );
+
+  const setAttendance = (booking, status) => perform(
+    () => apiRequest(`/bookings/${booking.id}/attendance`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+    `Attendance updated to ${status.toLowerCase()}.`,
+  );
+
+  const bookingAction = (booking, action) => perform(
+    () => apiRequest(`/bookings/${booking.id}/${action}`, { method: "POST" }),
+    action === "check-in" ? "Student checked in." : "Student checked out.",
+  );
+
+  const updateBed = (bed, status) => perform(
+    () => apiRequest(`/beds/${bed.id}/availability`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+    `Bed ${bed.bedNumber} availability updated.`,
+  );
+
+  const saveRoom = (room) => {
+    const edit = roomEdits[room.id] || room;
+    return perform(
+      () => apiRequest(`/rooms/${room.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: edit.name,
+          roomType: edit.roomType,
+          capacity: Number(edit.capacity),
+          rentPerMonth: Number(edit.rentPerMonth),
+        }),
+      }),
+      `${edit.name} updated.`,
+    );
+  };
+
+  const selectedProperty = properties.find((property) => String(property.id) === selectedPropertyId) || properties[0];
+  const totalBeds = properties.reduce((total, property) => total + (property.rooms || []).reduce((sum, room) => sum + (room.totalBeds || 0), 0), 0);
+  const vacantBeds = properties.reduce((total, property) => total + (property.rooms || []).reduce((sum, room) => sum + (room.availableBeds || 0), 0), 0);
+  const activeBookings = bookings.filter((booking) => booking.status === "ACTIVE");
+  const filteredResidents = activeBookings.filter((booking) => {
+    const term = query.trim().toLowerCase();
+    return !term || [booking.studentName, booking.studentEmail, booking.studentPhone, booking.propertyTitle, booking.roomName]
+      .some((value) => value?.toLowerCase().includes(term));
+  });
+  const pendingApplications = applications.filter((application) => application.status === "PENDING");
+
+  return (
+    <div className="ss-page">
+      <div className="ss-row ss-between">
+        <div><h1>Owner Dashboard</h1><p className="ss-muted">Manage your hostels, applications and residents.</p></div>
+        <button className="ss-btn ss-btn-ghost" onClick={() => { setError(""); void load(); }}>Refresh</button>
+      </div>
+      {error && <p className="ss-error" role="alert">{error}</p>}
+      {notice && <p className="ss-muted" role="status">{notice}</p>}
+      <div className="ss-grid-3 ss-stats">
+        <StatCard label="Your hostels" value={properties.length} />
+        <StatCard label="Pending applications" value={pendingApplications.length} />
+        <StatCard label="Occupied beds" value={totalBeds - vacantBeds} />
+        <StatCard label="Vacant beds" value={vacantBeds} />
+        <StatCard label="Active allocations" value={activeBookings.length} />
+        <StatCard label="Total beds" value={totalBeds} />
+      </div>
+
+      <section className="ss-section">
+        <h2>Your hostels & rooms</h2>
+        {properties.length === 0 ? <div className="ss-empty"><div>🏠</div><h3>No hostels are assigned to this owner account yet</h3></div> : (
+          <div style={{ marginTop: 14 }}>
+            <div className="ss-field ss-select-pg">
+              <label htmlFor="owner-hostel-select">Select a hostel to view its details</label>
+              <select id="owner-hostel-select" className="ss-input" value={selectedProperty?.id ?? ""} onChange={(event) => setSelectedPropertyId(event.target.value)}>
+                {properties.map((property) => <option value={property.id} key={property.id}>{property.title}</option>)}
+              </select>
+            </div>
+            {selectedProperty && <article className="ss-card ss-pad">
+                <div className="ss-row ss-between">
+                  <div><h3>{selectedProperty.title}</h3><p className="ss-muted">📍 {selectedProperty.locality}, {selectedProperty.city}</p></div>
+                  <span className="ss-badge ss-badge-blue">{selectedProperty.status}</span>
+                </div>
+                <p>{selectedProperty.availableBeds ?? 0} vacant / {selectedProperty.totalBeds ?? 0} total beds</p>
+                <p className="ss-muted">Facilities: {(selectedProperty.facilities || []).join(", ") || "Not specified"}</p>
+                {(selectedProperty.rooms || []).length === 0 && <p className="ss-muted">No rooms have been added.</p>}
+                {(selectedProperty.rooms || []).map((room) => {
+                  const edit = roomEdits[room.id] || room;
+                  return (
+                    <div className="ss-card ss-pad" key={room.id} style={{ boxShadow: "none" }}>
+                      <div className="ss-row ss-between"><h3>{room.name}</h3><span className="ss-muted">{room.availableBeds}/{room.totalBeds} vacant</span></div>
+                      <div className="ss-form-grid">
+                        <div className="ss-field"><label htmlFor={`room-name-${room.id}`}>Room name</label><input id={`room-name-${room.id}`} className="ss-input" value={edit.name} onChange={(event) => setRoomEdits((current) => ({ ...current, [room.id]: { ...edit, name: event.target.value } }))} /></div>
+                        <div className="ss-field"><label htmlFor={`room-type-${room.id}`}>Sharing type</label>
+                          <select id={`room-type-${room.id}`} className="ss-input" value={edit.roomType} onChange={(event) => setRoomEdits((current) => ({ ...current, [room.id]: { ...edit, roomType: event.target.value } }))}>
+                            {["SINGLE", "DOUBLE", "TRIPLE", "FOUR_SHARE", "OTHER"].map((type) => <option value={type} key={type}>{type.replace("_", " ")}</option>)}
+                          </select>
+                        </div>
+                        <div className="ss-field"><label htmlFor={`room-capacity-${room.id}`}>Total beds</label><input id={`room-capacity-${room.id}`} type="number" min={room.totalBeds} className="ss-input" value={edit.capacity} onChange={(event) => setRoomEdits((current) => ({ ...current, [room.id]: { ...edit, capacity: event.target.value } }))} /></div>
+                        <div className="ss-field"><label htmlFor={`room-rent-${room.id}`}>Monthly rent</label><input id={`room-rent-${room.id}`} type="number" min="0" className="ss-input" value={edit.rentPerMonth} onChange={(event) => setRoomEdits((current) => ({ ...current, [room.id]: { ...edit, rentPerMonth: event.target.value } }))} /></div>
+                      </div>
+                      <button className="ss-btn ss-btn-ghost" onClick={() => saveRoom(room)}>Save room details</button>
+                      {room.beds?.length > 0 && <div className="ss-row">{room.beds.map((bed) => (
+                        <label key={bed.id} className="ss-muted">{bed.bedNumber}{" "}
+                          <select className="ss-input" aria-label={`${bed.bedNumber} status`} value={bed.status} disabled={bed.status === "ALLOCATED"} onChange={(event) => updateBed(bed, event.target.value)}>
+                            <option value="AVAILABLE">Available</option><option value="MAINTENANCE">Maintenance</option>{bed.status === "ALLOCATED" && <option value="ALLOCATED">Allocated</option>}
+                          </select>
+                        </label>
+                      ))}</div>}
+                    </div>
+                  );
+                })}
+              </article>}
+          </div>
+        )}
+      </section>
+
+      <section className="ss-section">
+        <h2>Booking requests</h2>
+        {pendingApplications.length === 0 ? <p className="ss-muted" style={{ marginTop: 12 }}>No pending applications.</p> : (
+          <div className="ss-grid-2" style={{ marginTop: 14 }}>
+            {pendingApplications.map((application) => (
+              <article className="ss-card ss-pad" key={application.id}>
+                <h3>{application.propertyTitle}</h3>
+                <p><b>{application.studentName}</b> · {application.studentEmail}</p>
+                <p className="ss-muted">{application.roomName || "Room"} · Move-in {application.proposedMoveInDate || "—"}</p>
+                {application.note && <p>{application.note}</p>}
+                <div className="ss-row">
+                  <button className="ss-btn ss-btn-primary" onClick={() => decideApplication(application, "ACCEPTED")}>Approve</button>
+                  <button className="ss-btn ss-btn-ghost" onClick={() => decideApplication(application, "REJECTED")}>Reject</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="ss-section">
+        <div className="ss-row ss-between">
+          <h2>Residents & allocations</h2>
+          <input className="ss-input ss-search" aria-label="Search residents" placeholder="Search name, email, phone, hostel or room" value={query} onChange={(event) => setQuery(event.target.value)} />
+        </div>
+        <div className="ss-card ss-table-wrap" style={{ marginTop: 14 }}>
+          <table className="ss-table">
+            <thead><tr><th>Student</th><th>Contact</th><th>Hostel / room</th><th>Joining</th><th>Attendance</th><th>Check-in</th></tr></thead>
+            <tbody>
+              {filteredResidents.map((booking) => (
+                <tr key={booking.id}>
+                  <td><b>{booking.studentName}</b><br /><span className="ss-muted">Booking #{booking.id}</span></td>
+                  <td>{booking.studentEmail}<br />{booking.studentPhone || "—"}</td>
+                  <td>{booking.propertyTitle}<br />{booking.roomName || booking.bedNumber || "—"}</td>
+                  <td>{booking.moveInDate || "—"}</td>
+                  <td><select className="ss-input" aria-label={`Attendance for ${booking.studentName}`} value={booking.attendanceStatus || ""} onChange={(event) => setAttendance(booking, event.target.value)}>
+                    <option value="" disabled>Record attendance</option><option value="PRESENT">Present</option><option value="ABSENT">Absent</option>
+                  </select></td>
+                  <td>{booking.checkedInAt && !booking.checkedOutAt
+                    ? <button className="ss-btn ss-btn-ghost" onClick={() => bookingAction(booking, "check-out")}>Check out</button>
+                    : booking.checkedOutAt ? <span className="ss-muted">Checked out</span>
+                      : <button className="ss-btn ss-btn-primary" onClick={() => bookingAction(booking, "check-in")}>Check in</button>}
+                  </td>
+                </tr>
+              ))}
+              {filteredResidents.length === 0 && <tr><td colSpan="6" className="ss-muted ss-center">No residents match your search.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AdminDashboard() {
+  const [users, setUsers] = useState([]);
+  const [bookings, setBookings] = useState([]);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const [allUsers, allProperties, allDemoBookings] = await Promise.all([
+        apiRequest("/admin/users"),
+        apiRequest("/admin/properties"),
+        apiRequest("/admin/demo-bookings"),
+      ]);
+      const propertyBookings = await Promise.all(allProperties.map(async (property) => {
+        try {
+          const propertyId = property.id;
+          const rows = await apiRequest(`/properties/${propertyId}/bookings`);
+          return (rows || []).map((booking) => ({
+            ...booking,
+            propertyTitle: property.title,
+            propertyLocation: [property.locality, property.city].filter(Boolean).join(", "),
+          }));
+        } catch (bookingError) {
+          throw new Error(`Could not load bookings for ${property.title || `hostel ${property.id}`}: ${bookingError.message}`);
+        }
+      }));
+      setUsers(allUsers || []);
+      setBookings([
+        ...propertyBookings.flat(),
+        ...(allDemoBookings || []).map((booking) => ({
+          ...booking,
+          propertyTitle: booking.pgName,
+          propertyLocation: booking.location,
+          roomName: booking.sharing,
+          moveInDate: booking.moveInDate,
+          status: booking.status,
+        })),
+      ]);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }, []);
+
+  useEffect(() => { void Promise.resolve().then(load); }, [load]);
+
+  const students = users.filter((user) => user.role === "STUDENT");
+  const bookingsByStudent = new Map();
+  bookings.forEach((booking) => {
+    const email = booking.studentEmail?.toLowerCase();
+    if (!email) return;
+    const studentBookings = bookingsByStudent.get(email) || [];
+    studentBookings.push(booking);
+    bookingsByStudent.set(email, studentBookings);
+  });
+  const housedStudentCount = new Set(
+    bookings.filter((booking) => booking.status === "ACTIVE")
+      .map((booking) => booking.studentEmail?.toLowerCase())
+      .filter(Boolean),
+  ).size;
+
+  const updateRole = async (user, role) => {
+    setError("");
+    setNotice("");
+    try {
+      const updated = await apiRequest(`/admin/users/${user.id}/role?role=${encodeURIComponent(role)}`, { method: "PATCH" });
+      setUsers((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setNotice(`${updated.fullName}'s role updated.`);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  };
+
+  return (
+    <div className="ss-page">
+      <h1>Admin Dashboard</h1>
+      <p className="ss-muted">Manage accounts and view registered students and their hostel assignments.</p>
+      {error && <p className="ss-error" role="alert">{error}</p>}
+      {notice && <p className="ss-muted" role="status">{notice}</p>}
+      <div className="ss-grid-3 ss-stats">
+        <StatCard label="Registered students" value={students.length} />
+        <StatCard label="Students with active hostel bookings" value={housedStudentCount} />
+      </div>
+      <section className="ss-section">
+        <h2>Account management</h2>
+        <div className="ss-card ss-table-wrap" style={{ marginTop: 14 }}>
+          <table className="ss-table">
+            <thead><tr><th>Name</th><th>Username</th><th>Email</th><th>Phone</th><th>Role</th></tr></thead>
+            <tbody>
+              {users.map((user) => (
+                <tr key={user.id}>
+                  <td><b>{user.fullName}</b></td><td>{user.username || "—"}</td><td>{user.email}</td><td>{user.phone || "—"}</td>
+                  <td><select className="ss-input" value={user.role} onChange={(event) => updateRole(user, event.target.value)}>
+                    <option value="STUDENT">Student</option><option value="OWNER">Owner</option><option value="ADMIN">Admin</option>
+                  </select></td>
+                </tr>
+              ))}
+              {users.length === 0 && <tr><td colSpan="5" className="ss-muted ss-center">No accounts found.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className="ss-section">
+        <h2>Registered students and hostel assignments</h2>
+        <p className="ss-muted">Registered students are listed even if they have not booked a hostel yet.</p>
+        <div className="ss-card ss-table-wrap" style={{ marginTop: 14 }}>
+          <table className="ss-table">
+            <thead><tr><th>Student</th><th>Contact</th><th>Hostel and room</th><th>Move-in</th><th>Booking status</th></tr></thead>
+            <tbody>
+              {students.map((student) => {
+                const assignments = bookingsByStudent.get(student.email?.toLowerCase()) || [];
+                return (
+                  <tr key={student.id}>
+                    <td><b>{student.fullName}</b><br /><span className="ss-muted">{student.username || "No username"}</span></td>
+                    <td>{student.email}<br />{student.phone || "No phone provided"}</td>
+                    <td>{assignments.length === 0 ? <span className="ss-muted">Not assigned to a hostel</span> : assignments.map((booking) => (
+                      <div key={booking.id}>
+                        <b>{booking.propertyTitle || "Hostel"}</b>
+                        {booking.propertyLocation && <><br /><span className="ss-muted">{booking.propertyLocation}</span></>}
+                        <br /><span className="ss-muted">{booking.roomName || "Room"}{booking.bedNumber ? ` · Bed ${booking.bedNumber}` : ""}</span>
+                      </div>
+                    ))}</td>
+                    <td>{assignments.length === 0 ? "—" : assignments.map((booking) => <div key={booking.id}>{booking.moveInDate || "—"}</div>)}</td>
+                    <td>{assignments.length === 0 ? "No booking" : assignments.map((booking) => <div key={booking.id}>{statusText(booking.status)}</div>)}</td>
+                  </tr>
+                );
+              })}
+              {students.length === 0 && <tr><td colSpan="5" className="ss-muted ss-center">No students have registered yet.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className="ss-section">
+        <h2>All bookings</h2>
+        <div className="ss-card ss-table-wrap" style={{ marginTop: 14 }}>
+          <table className="ss-table">
+            <thead><tr><th>Booking ID</th><th>Student</th><th>Hostel</th><th>Room</th><th>Status</th></tr></thead>
+            <tbody>
+              {bookings.map((booking) => <tr key={booking.id}><td>{booking.id}</td><td>{booking.studentName || booking.studentEmail || "—"}</td><td>{booking.propertyTitle}</td><td>{booking.roomName || booking.bedNumber || "—"}</td><td>{statusText(booking.status)}</td></tr>)}
+              {bookings.length === 0 && <tr><td colSpan="5" className="ss-muted ss-center">No bookings found.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function Dashboard() {
+  const navigate = useNavigate();
+  const user = getUser();
+  if (!user) {
+    return <div className="ss-page ss-center"><div className="ss-card ss-success"><h1>Login required</h1><p className="ss-muted">Log in to open your dashboard.</p><Link to="/login" className="ss-btn ss-btn-primary">Login</Link></div></div>;
+  }
+  if (user.role === "ADMIN") return <AdminDashboard />;
+  if (user.role === "STUDENT") return <StudentDashboard user={user} />;
+  if (user.role === "OWNER") return <OwnerDashboard />;
+  return <div className="ss-page"><h1>Dashboard unavailable</h1><button className="ss-btn ss-btn-primary" onClick={() => navigate("/login")}>Sign in again</button></div>;
+}
+
 /* ---------------- AUTH (frontend demo) ---------------- */
 function AuthForm({ mode }) {
   const navigate = useNavigate();
-  const location = useLocation();
-  const [f, setF] = useState({ name: "", email: "", password: "" });
+  const [f, setF] = useState({ name: "", username: "", email: "", phone: "", password: "", identifier: "" });
   const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
   const isReg = mode === "register";
 
-  const submit = () => {
+  const submit = async (event) => {
+    event.preventDefault();
+    setErr("");
     if (isReg && !f.name.trim()) return setErr("Enter your name");
-    if (!/^\S+@\S+\.\S+$/.test(f.email)) return setErr("Enter a valid email");
-    if (f.password.length < 6) return setErr("Password must be at least 6 characters");
-    setUser({ name: f.name.trim() || f.email.split("@")[0], email: f.email });
-    window.dispatchEvent(new Event("ss-auth"));
-    navigate(location.state?.from || "/stay");
+    if (isReg && !/^(?=.*[A-Za-z])(?=.*[0-9])[A-Za-z0-9]*[@#$_.-][A-Za-z0-9]*$/.test(f.username)) {
+      return setErr("Username must include letters, numbers, and exactly one of these characters: @ # $ _ - .");
+    }
+    const identifier = f.identifier.trim();
+    const email = isReg ? f.email.trim() : identifier;
+    if (isReg && !/^\S+@\S+\.\S+$/.test(email)) return setErr("Enter a valid email");
+    if (!isReg && !identifier) return setErr("Enter your username or email");
+    if (isReg && !f.password) return setErr("Enter a password");
+    if (!isReg && !f.password) return setErr("Enter your password");
+    setBusy(true);
+    try {
+      const auth = await apiRequest(`/auth/${isReg ? "register" : "login"}`, {
+        method: "POST",
+        body: JSON.stringify(isReg
+          ? { fullName: f.name.trim(), username: f.username.trim(), email, phone: f.phone.trim(), password: f.password, role: "STUDENT" }
+          : { username: identifier.includes("@") ? undefined : identifier, email: identifier.includes("@") ? identifier : undefined, password: f.password }),
+      });
+      setSession(auth);
+      window.dispatchEvent(new Event("ss-auth"));
+      navigate("/dashboard", { replace: true });
+    } catch (requestError) {
+      setErr(requestError.message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -509,11 +1168,20 @@ function AuthForm({ mode }) {
       <div className="ss-auth-art ss-grad-men"><h2>🏠 StudentStay</h2><p>Your next home is a few clicks away.</p></div>
       <div className="ss-auth-form">
         <h1>{isReg ? "Create account" : "Welcome back"}</h1>
-        {isReg && <div className="ss-field"><label>Full name</label><input className="ss-input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></div>}
-        <div className="ss-field"><label>Email</label><input className="ss-input" type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></div>
-        <div className="ss-field"><label>Password</label><input className="ss-input" type="password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></div>
-        {err && <small className="ss-error">{err}</small>}
-        <button className="ss-btn ss-btn-primary ss-full" onClick={submit}>{isReg ? "Create account" : "Login"}</button>
+        <form onSubmit={submit}>
+          {isReg && <div className="ss-field"><label>Full name</label><input className="ss-input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></div>}
+          {isReg && <div className="ss-field"><label>Username</label><input className="ss-input" autoComplete="username" value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} /></div>}
+          {isReg && <div className="ss-field"><label>Email</label><input className="ss-input" type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></div>}
+          {isReg && <div className="ss-field"><label>Phone</label><input className="ss-input" type="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></div>}
+          {!isReg && <div className="ss-field"><label>Admin ID, username or email</label><input className="ss-input" autoComplete="username" value={f.identifier} onChange={(e) => setF({ ...f, identifier: e.target.value })} /><small className="ss-muted">Sign in with your account ID and password. You’ll be taken to the dashboard for your role.</small></div>}
+          <div className="ss-field">
+            <label>Password</label>
+            <input className="ss-input" type="password" autoComplete={isReg ? "new-password" : "current-password"} value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} required />
+            {isReg && <small className="ss-muted">Any non-empty password is accepted.</small>}
+          </div>
+          {err && <small className="ss-error">{err}</small>}
+          <button className="ss-btn ss-btn-primary ss-full" type="submit" disabled={busy}>{busy ? "Please wait..." : isReg ? "Create account" : "Login"}</button>
+        </form>
         <p className="ss-muted ss-center">
           {isReg ? <>Already registered? <Link to="/login">Login</Link></> : <>New here? <Link to="/register">Register</Link></>}
         </p>
